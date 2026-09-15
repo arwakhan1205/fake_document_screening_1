@@ -545,7 +545,7 @@
     <h2>Stored results &amp; logs</h2>
     <p class="panel-note">Kept in this browser's local session storage — not sent anywhere. Aadhaar numbers are masked before storage.</p>
     <table id="historyTable">
-      <tr><th>Time</th><th>Document</th><th>Risk</th><th>Decision</th></tr>
+      <tr><th>Time</th><th>Document</th><th>Risk</th><th>Decision</th><th>Action</th></tr>
     </table>
     <div class="empty hidden" id="historyEmpty">No screenings logged yet.</div>
     <div class="actions">
@@ -2422,8 +2422,9 @@ async function runPipeline(){
 
   // Step 13: Report & audit log
   setStep(13,'active');
-  renderResults({docType, classification, fields, extraction, ocrConfidence, tamperScore, tamperIndicators, copyMove, consistency, hardChecks, qr, mrzLines, faceResult, risk, decision, rawOutput, ocrAnomaly, metadata, quality});
-  await logHistory({docType, risk, decision, time: Date.now()});
+  const reportArgs = {docType, classification, fields, extraction, ocrConfidence, tamperScore, tamperIndicators, copyMove, consistency, hardChecks, qr, mrzLines, faceResult, risk, decision, rawOutput, ocrAnomaly, metadata, quality};
+  renderResults(reportArgs);
+  await logHistory({docType, risk, decision, time: Date.now(), reportArgs});
   log('Screening report generated and logged.', 'ok');
   setStep(13,'done');
 
@@ -4117,9 +4118,9 @@ document.getElementById('downloadReport').addEventListener('click', ()=>{
 });
 
 // ---------- History (persistent storage) ----------
-async function logHistory({docType, risk, decision, time}){
+async function logHistory({docType, risk, decision, time, reportArgs}){
   try {
-    const logEntry = {docType, score: risk.score, decision: decision.decision, badgeClass: decision.badgeClass, time};
+    const logEntry = {docType, score: risk.score, decision: decision.decision, badgeClass: decision.badgeClass, time, reportArgs};
     await fetch(`${FIREBASE_DB_URL}/history.json`, {
       method: 'POST',
       body: JSON.stringify(logEntry)
@@ -4134,7 +4135,7 @@ async function fetchAndRenderHistory(){
     const data = await res.json();
     let list = [];
     if(data) {
-      list = Object.values(data).sort((a,b) => b.time - a.time);
+      list = Object.keys(data).map(key => ({...data[key], id: key})).sort((a,b) => b.time - a.time);
     }
     renderHistory(list.slice(0, 50));
   } catch(e) { console.error("Firebase fetch failed", e); }
@@ -4148,9 +4149,34 @@ function renderHistory(list){
   empty.classList.add('hidden');
   list.forEach(item=>{
     const tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
     tr.innerHTML = `<td>${new Date(item.time).toLocaleString()}</td><td>${item.docType}</td><td>${item.score}/100</td>
-      <td><span class="outcome-badge ${item.badgeClass||'review'}" style="padding:2px 8px;font-size:10.5px;">${item.decision||'—'}</span></td>`;
+      <td><span class="outcome-badge ${item.badgeClass||'review'}" style="padding:2px 8px;font-size:10.5px;">${item.decision||'—'}</span></td>
+      <td><button class="small btn-delete" data-id="${item.id}" style="padding:2px 6px;">Delete</button></td>`;
+    
+    tr.addEventListener('click', (e) => {
+      if(e.target.classList.contains('btn-delete')) return;
+      if(item.reportArgs) {
+        document.getElementById('resultsSection').classList.remove('hidden');
+        renderResults(item.reportArgs);
+        document.getElementById('resultsSection').scrollIntoView({behavior:'smooth', block:'start'});
+      } else {
+        alert("Details not available for this scan.");
+      }
+    });
+
     tbl.appendChild(tr);
+  });
+
+  document.querySelectorAll('.btn-delete').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = e.target.getAttribute('data-id');
+      try {
+        await fetch(`${FIREBASE_DB_URL}/history/${id}.json`, { method: 'DELETE' });
+        fetchAndRenderHistory();
+      } catch(err) { console.error("Firebase delete failed", err); }
+    });
   });
 }
 document.getElementById('clearHistory').addEventListener('click', async ()=>{
