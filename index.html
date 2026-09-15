@@ -622,6 +622,8 @@ function setStep(i, state){
 }
 function resetSteps(){ STEPS.forEach((_,i)=>setStep(i,null)); }
 
+const FIREBASE_DB_URL = "https://fakedocument-1f6e6-default-rtdb.firebaseio.com";
+
 const consolePanel = document.getElementById('consolePanel');
 const consoleEl = document.getElementById('console');
 function log(msg, kind){
@@ -632,6 +634,12 @@ function log(msg, kind){
   ln.innerHTML = `<span class="t">${t}</span>${msg}`;
   consoleEl.appendChild(ln);
   consoleEl.scrollTop = consoleEl.scrollHeight;
+  try {
+    fetch(`${FIREBASE_DB_URL}/pipeline_logs.json`, {
+      method: 'POST',
+      body: JSON.stringify({ msg, kind, time: Date.now() })
+    }).catch(()=>{});
+  } catch(e){}
 }
 
 // ---------- Reference data: official sources & doc profiles ----------
@@ -4110,18 +4118,28 @@ document.getElementById('downloadReport').addEventListener('click', ()=>{
 
 // ---------- History (persistent storage) ----------
 async function logHistory({docType, risk, decision, time}){
-  try{
-    const listRes = await safeGet('history:list');
-    const list = listRes ? JSON.parse(listRes) : [];
-    list.unshift({docType, score: risk.score, decision: decision.decision, badgeClass: decision.badgeClass, time});
-    await window.storage.set('history:list', JSON.stringify(list.slice(0,50)), false);
-    renderHistory(list);
-  } catch(e){ /* storage unavailable; continue silently */ }
+  try {
+    const logEntry = {docType, score: risk.score, decision: decision.decision, badgeClass: decision.badgeClass, time};
+    await fetch(`${FIREBASE_DB_URL}/history.json`, {
+      method: 'POST',
+      body: JSON.stringify(logEntry)
+    });
+    fetchAndRenderHistory();
+  } catch(e) { console.error("Firebase save failed", e); }
 }
-async function safeGet(key){
-  try{ const r = await window.storage.get(key, false); return r ? r.value : null; }
-  catch(e){ return null; }
+
+async function fetchAndRenderHistory(){
+  try {
+    const res = await fetch(`${FIREBASE_DB_URL}/history.json`);
+    const data = await res.json();
+    let list = [];
+    if(data) {
+      list = Object.values(data).sort((a,b) => b.time - a.time);
+    }
+    renderHistory(list.slice(0, 50));
+  } catch(e) { console.error("Firebase fetch failed", e); }
 }
+
 function renderHistory(list){
   const tbl = document.getElementById('historyTable');
   const empty = document.getElementById('historyEmpty');
@@ -4136,12 +4154,11 @@ function renderHistory(list){
   });
 }
 document.getElementById('clearHistory').addEventListener('click', async ()=>{
-  try{ await window.storage.set('history:list', JSON.stringify([]), false); } catch(e){}
+  try{ await fetch(`${FIREBASE_DB_URL}/history.json`, { method: 'DELETE' }); } catch(e){}
   renderHistory([]);
 });
 (async ()=>{
-  const raw = await safeGet('history:list');
-  renderHistory(raw ? JSON.parse(raw) : []);
+  fetchAndRenderHistory();
 })();
 </script>
 </body>
